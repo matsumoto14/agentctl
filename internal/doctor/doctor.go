@@ -1,12 +1,15 @@
-// Package doctor は環境の非破壊チェックを行う。報告のみで、修復はしない。
+// Package doctor は環境の非破壊チェックを行う。報告のみで、修復はもちろん
+// ディレクトリ作成やファイル書き込みも一切しない。
 package doctor
 
 import (
-	"fmt"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/matsumoto14/agentctl/internal/core"
 )
@@ -23,17 +26,22 @@ type Report struct {
 }
 
 type Options struct {
-	Binaries     []string
-	StateDir     string
-	ConfigDir    string
-	LoadConfig   func() error // 設定の検証は config パッケージの責務なので注入する
-	Sessions     []core.Session
-	WorktreesDir string
+	Binaries       []string
+	StateDir       string
+	ConfigDir      string
+	LoadConfig     func() error // 設定の検証は config パッケージの責務なので注入する
+	Sessions       []core.Session
+	BrokenSessions []string // 読み込めない session の id
+	SessionsError  string   // sessions ディレクトリ自体が読めない場合の報告
+	WorktreesDir   string
 
 	// テストから外部コマンド依存を差し替えるための間接化
 	LookPath       func(string) (string, error)
 	ComposeVersion func() (string, error)
 }
+
+// W_OK 相当。access(2) で書込可否を副作用なしに確認する。
+const accessWrite = 0x2
 
 func Run(o Options) Report {
 	lookPath := o.LookPath
@@ -67,13 +75,16 @@ func Run(o Options) Report {
 		add("docker-compose", true, v)
 	}
 
-	if err := os.MkdirAll(o.StateDir, 0o755); err != nil {
+	// state dir は作成しない。未作成は異常ではない（初回の task start が作る）。
+	if fi, err := os.Stat(o.StateDir); errors.Is(err, fs.ErrNotExist) {
+		add("state-dir", true, "未作成（初回の task start で作成される）")
+	} else if err != nil {
 		add("state-dir", false, err.Error())
-	} else if f, err := os.CreateTemp(o.StateDir, ".doctor-*"); err != nil {
-		add("state-dir", false, fmt.Sprintf("書き込み不可: %v", err))
+	} else if !fi.IsDir() {
+		add("state-dir", false, "ディレクトリではない")
+	} else if err := syscall.Access(o.StateDir, accessWrite); err != nil {
+		add("state-dir", false, "書き込み不可")
 	} else {
-		f.Close()
-		os.Remove(f.Name())
 		add("state-dir", true, o.StateDir)
 	}
 
@@ -86,6 +97,12 @@ func Run(o Options) Report {
 	}
 
 	// session ↔ worktree の drift を報告する。片付けは task rm の責務。
+	if o.SessionsError != "" {
+		add("sessions", false, o.SessionsError)
+	}
+	for _, id := range o.BrokenSessions {
+		add("session:"+id, false, "session ファイルが読み込めない（壊れている）")
+	}
 	known := map[string]bool{}
 	for _, s := range o.Sessions {
 		known[filepath.Base(s.Worktree)] = true
@@ -94,6 +111,10 @@ func Run(o Options) Report {
 		} else {
 			add("session:"+s.ID, true, s.Worktree)
 		}
+	}
+	// 壊れた session の worktree を orphan と誤診しないため、broken も既知に含める
+	for _, id := range o.BrokenSessions {
+		known[id] = true
 	}
 	if entries, err := os.ReadDir(o.WorktreesDir); err == nil {
 		for _, e := range entries {

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -9,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/matsumoto14/agentctl/internal/cli"
 	"github.com/matsumoto14/agentctl/internal/config"
 	"github.com/matsumoto14/agentctl/internal/core"
 	"github.com/matsumoto14/agentctl/internal/doctor"
@@ -23,7 +26,24 @@ func main() {
 	// Ctrl-C / SIGTERM で実行中の Agent を止め、session の保存まで進める
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	os.Exit(run(os.Args[1:], realDeps(ctx)))
+	os.Exit(execute(os.Args[1:], realDeps(ctx)))
+}
+
+// execute は cobra の結果を終了コード規約（0/1/2/3/10）へ写像する。
+func execute(args []string, d *deps) int {
+	root := newRootCmd(d)
+	root.SetArgs(args)
+	err := root.Execute()
+	if err == nil {
+		return cli.ExitOK
+	}
+	var ec exitCodeError
+	if errors.As(err, &ec) {
+		return ec.code
+	}
+	// cobra 由来（未知コマンド・未知フラグ・引数の数）は使い方エラー
+	fmt.Fprintf(d.stderr, "agentctl: %v\n", err)
+	return cli.ExitUsage
 }
 
 func realDeps(ctx context.Context) *deps {
@@ -51,8 +71,10 @@ func realDeps(ctx context.Context) *deps {
 			}
 			return toCoreRepo(r), nil
 		},
-		store:        func(c string) core.SessionStore { return storeFor(c) },
-		locker:       func(c string) core.Locker { return state.NewLock(companyDir(c)) },
+		store: func(c string) core.SessionStore { return storeFor(c) },
+		// 「同じ実行環境で Agent を同時に起動しない」ため、lock は会社を跨いだ
+		// ホスト単位に置く（会社毎だと --company 違いで並走できてしまう）
+		lock:         state.NewLock(stateRoot),
 		logWriter:    func(c, id string) (io.WriteCloser, error) { return storeFor(c).LogWriter(id) },
 		worktreePath: func(c, id string) string { return storeFor(c).WorktreePath(id) },
 		worktrees:    worktree.New(),
@@ -62,8 +84,8 @@ func realDeps(ctx context.Context) *deps {
 		prs:          gh,
 		doctorReport: func(company string) doctor.Report {
 			st := storeFor(company)
-			sessions, _ := st.List()
-			return doctor.Run(doctor.Options{
+			sessions, listErr := st.List()
+			opts := doctor.Options{
 				Binaries:  []string{"git", "docker", "gh", "codex", "claude"},
 				StateDir:  companyDir(company),
 				ConfigDir: configDir,
@@ -71,9 +93,14 @@ func realDeps(ctx context.Context) *deps {
 					_, err := config.LoadAll(configDir, company)
 					return err
 				},
-				Sessions:     sessions,
-				WorktreesDir: st.WorktreesDir(),
-			})
+				Sessions:       sessions,
+				BrokenSessions: st.ListBroken(),
+				WorktreesDir:   st.WorktreesDir(),
+			}
+			if listErr != nil {
+				opts.SessionsError = listErr.Error()
+			}
+			return doctor.Run(opts)
 		},
 	}
 }

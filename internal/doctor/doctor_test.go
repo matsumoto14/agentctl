@@ -17,7 +17,7 @@ func fakeExec() (func(string) (string, error), func() (string, error)) {
 func TestRunAllOK(t *testing.T) {
 	lookPath, composeVersion := fakeExec()
 	dir := t.TempDir()
-	wt := filepath.Join(dir, "worktrees", "issue-1")
+	wt := filepath.Join(dir, "worktrees", "myapp-issue-1")
 	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -26,13 +26,30 @@ func TestRunAllOK(t *testing.T) {
 		StateDir:       dir,
 		ConfigDir:      "/cfg",
 		LoadConfig:     func() error { return nil },
-		Sessions:       []core.Session{{ID: "issue-1", Worktree: wt}},
+		Sessions:       []core.Session{{ID: "myapp-issue-1", Worktree: wt}},
 		WorktreesDir:   filepath.Join(dir, "worktrees"),
 		LookPath:       lookPath,
 		ComposeVersion: composeVersion,
 	})
 	if !r.OK {
 		t.Errorf("report = %+v", r)
+	}
+}
+
+// doctor は report-only であり、state dir の未作成を異常とせず、作成もしない。
+func TestRunDoesNotCreateStateDir(t *testing.T) {
+	lookPath, composeVersion := fakeExec()
+	missing := filepath.Join(t.TempDir(), "not-yet")
+	r := Run(Options{
+		StateDir:       missing,
+		LookPath:       lookPath,
+		ComposeVersion: composeVersion,
+	})
+	if !r.OK {
+		t.Errorf("report = %+v", r)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Error("doctor が state dir を作成した（report-only 違反）")
 	}
 }
 
@@ -46,7 +63,8 @@ func TestRunReportsProblems(t *testing.T) {
 		Binaries:       []string{"codex"},
 		StateDir:       dir,
 		LoadConfig:     func() error { return errors.New("設定がない") },
-		Sessions:       []core.Session{{ID: "issue-9", Worktree: filepath.Join(dir, "worktrees", "gone")}},
+		Sessions:       []core.Session{{ID: "myapp-issue-9", Worktree: filepath.Join(dir, "worktrees", "gone")}},
+		BrokenSessions: []string{"myapp-issue-8"},
 		WorktreesDir:   filepath.Join(dir, "worktrees"),
 		LookPath:       func(string) (string, error) { return "", errors.New("not found") },
 		ComposeVersion: composeVersion,
@@ -54,22 +72,21 @@ func TestRunReportsProblems(t *testing.T) {
 	if r.OK {
 		t.Error("問題があるのに OK")
 	}
-	var names []string
+	want := map[string]bool{
+		"binary:codex":          false,
+		"config":                false,
+		"session:myapp-issue-9": false,
+		"session:myapp-issue-8": false,
+		"worktree:orphan":       false,
+	}
 	for _, c := range r.Checks {
-		if !c.OK {
-			names = append(names, c.Name)
+		if _, target := want[c.Name]; target {
+			want[c.Name] = true
 		}
 	}
-	want := map[string]bool{"binary:codex": true, "config": true, "session:issue-9": true, "worktree:orphan": true}
-	for n := range want {
-		found := false
-		for _, got := range names {
-			if got == n {
-				found = true
-			}
-		}
+	for n, found := range want {
 		if !found {
-			t.Errorf("%s が報告されていない: %v", n, names)
+			t.Errorf("%s が報告されていない: %+v", n, r.Checks)
 		}
 	}
 }

@@ -61,6 +61,9 @@ func (s *Store) Load(id string) (core.Session, error) {
 	return sess, nil
 }
 
+// List は読める session だけを返す。壊れたファイル 1 つで status や doctor の
+// 全体が失敗すると、生きているタスクまで orphan と誤診されるため隔離する。
+// 壊れたものは ListBroken で別途報告する。
 func (s *Store) List() ([]core.Session, error) {
 	entries, err := os.ReadDir(s.sessionsDir())
 	if errors.Is(err, fs.ErrNotExist) {
@@ -76,12 +79,31 @@ func (s *Store) List() ([]core.Session, error) {
 		}
 		sess, err := s.Load(strings.TrimSuffix(e.Name(), ".json"))
 		if err != nil {
-			return nil, err
+			continue
 		}
 		out = append(out, sess)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out, nil
+}
+
+// ListBroken は読み込みに失敗する session の id を返す（doctor の報告用）。
+func (s *Store) ListBroken() []string {
+	entries, err := os.ReadDir(s.sessionsDir())
+	if err != nil {
+		return nil
+	}
+	var broken []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if _, err := s.Load(id); err != nil {
+			broken = append(broken, id)
+		}
+	}
+	return broken
 }
 
 func (s *Store) Delete(id string) error {

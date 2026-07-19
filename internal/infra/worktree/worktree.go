@@ -23,10 +23,10 @@ func runGit(dir string, args ...string) error {
 	return nil
 }
 
-// Add は base から新しいブランチを切って worktree を作る。task rm 後に同じ Issue を
-// やり直せるよう、同名ブランチが残っていても -B で base へ作り直す。
+// Add は base から新しいブランチを切って worktree を作る。既存ブランチの
+// 強制リセット（-B）は行わない — 未使用名の選択は core 側の責務（pickBranch）。
 func (g *Git) Add(repoPath, worktreePath, branch, base string) error {
-	return g.run(repoPath, "worktree", "add", "-B", branch, worktreePath, base)
+	return g.run(repoPath, "worktree", "add", "-b", branch, worktreePath, base)
 }
 
 func (g *Git) Remove(repoPath, worktreePath string) error {
@@ -38,4 +38,15 @@ func (g *Git) Remove(repoPath, worktreePath string) error {
 		}
 	}
 	return err
+}
+
+// BranchExists は local と origin remote-tracking のどちらかにブランチがあるかを返す。
+// rev-parse の失敗は「存在しない」と同義に扱う（リポ自体の異常は直後の Add が報告する）。
+func (g *Git) BranchExists(repoPath, branch string) (bool, error) {
+	for _, ref := range []string{"refs/heads/" + branch, "refs/remotes/origin/" + branch} {
+		if err := g.run(repoPath, "rev-parse", "--verify", "--quiet", ref); err == nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }

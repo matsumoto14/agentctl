@@ -50,7 +50,8 @@ type Session struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-func TaskID(issue int) string { return fmt.Sprintf("issue-%d", issue) }
+// TaskID はリポジトリ名を含める。同じ会社に複数リポがある場合の Issue 番号衝突を防ぐ。
+func TaskID(repo string, issue int) string { return fmt.Sprintf("%s-issue-%d", repo, issue) }
 
 // ComposeProject はタスク毎に compose project 名を分離する（設計書 §9.3）。
 func ComposeProject(taskID string) string { return "agentctl-" + taskID }

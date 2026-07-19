@@ -24,6 +24,8 @@ type Locker interface {
 type WorktreeManager interface {
 	Add(repoPath, worktreePath, branch, base string) error
 	Remove(repoPath, worktreePath string) error
+	// BranchExists は local と origin のどちらかにブランチがあるかを返す。
+	BranchExists(repoPath, branch string) (bool, error)
 }
 
 type IssueReader interface {

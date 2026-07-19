@@ -2,6 +2,8 @@ package state
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -45,6 +47,29 @@ func TestStoreListSortedByCreation(t *testing.T) {
 	}
 	if len(list) != 3 || list[0].ID != "issue-3" || list[2].ID != "issue-2" {
 		t.Errorf("list = %+v", list)
+	}
+}
+
+// 壊れた session が 1 つあっても List は残りを返し、壊れたものは ListBroken が報告する。
+func TestStoreListIsolatesBrokenSessions(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	if err := s.Save(core.Session{ID: "issue-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sessions", "issue-2.json"), []byte("{broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.List()
+	if err != nil || len(list) != 1 || list[0].ID != "issue-1" {
+		t.Errorf("list = %+v, err = %v", list, err)
+	}
+	broken := s.ListBroken()
+	if len(broken) != 1 || broken[0] != "issue-2" {
+		t.Errorf("broken = %v", broken)
 	}
 }
 

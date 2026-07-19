@@ -12,6 +12,7 @@ import (
 type fakeStore struct {
 	m       map[string]Session
 	saveErr error
+	loadErr error // ErrNotFound 以外の読込失敗を再現する
 }
 
 func newFakeStore() *fakeStore { return &fakeStore{m: map[string]Session{}} }
@@ -25,6 +26,9 @@ func (f *fakeStore) Save(s Session) error {
 }
 
 func (f *fakeStore) Load(id string) (Session, error) {
+	if f.loadErr != nil {
+		return Session{}, f.loadErr
+	}
 	s, ok := f.m[id]
 	if !ok {
 		return Session{}, ErrNotFound
@@ -69,6 +73,7 @@ type fakeWT struct {
 	removes   []wtCall
 	addErr    error
 	removeErr error
+	branches  map[string]bool // 既存扱いにするブランチ名
 }
 
 func (f *fakeWT) Add(repo, path, branch, base string) error {
@@ -79,6 +84,10 @@ func (f *fakeWT) Add(repo, path, branch, base string) error {
 func (f *fakeWT) Remove(repo, path string) error {
 	f.removes = append(f.removes, wtCall{repo: repo, path: path})
 	return f.removeErr
+}
+
+func (f *fakeWT) BranchExists(repo, branch string) (bool, error) {
+	return f.branches[branch], nil
 }
 
 type fakeIssues struct {
@@ -150,7 +159,7 @@ func testRepo() RepoConfig {
 func newTasks() (*Tasks, *fakeStore, *fakeLock, *fakeWT, *fakeIssues, *fakeAgents, *fakeCompose) {
 	st := newFakeStore()
 	lk := &fakeLock{}
-	wt := &fakeWT{}
+	wt := &fakeWT{branches: map[string]bool{}}
 	is := &fakeIssues{issue: Issue{Number: 12, Title: "タイトル", Body: "本文"}}
 	ag := &fakeAgents{}
 	cp := &fakeCompose{}
@@ -162,7 +171,7 @@ func newTasks() (*Tasks, *fakeStore, *fakeLock, *fakeWT, *fakeIssues, *fakeAgent
 func startParams() StartParams {
 	return StartParams{
 		Company: "personal", Repo: testRepo(), Issue: 12, Agent: AgentCodex,
-		Timeout: time.Minute, WorktreePath: "/state/worktrees/issue-12", AgentOut: io.Discard,
+		Timeout: time.Minute, WorktreePath: "/state/worktrees/myapp-issue-12", AgentOut: io.Discard,
 	}
 }
 
@@ -172,33 +181,35 @@ func TestStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.ID != "issue-12" || s.Branch != "agentctl/issue-12" || s.Runs != 1 || s.LastAgent != AgentCodex {
+	if s.ID != "myapp-issue-12" || s.Branch != "agentctl/myapp-issue-12" || s.Runs != 1 || s.LastAgent != AgentCodex {
 		t.Errorf("session = %+v", s)
 	}
-	if got := st.m["issue-12"]; got.Runs != 1 {
+	if got := st.m["myapp-issue-12"]; got.Runs != 1 {
 		t.Errorf("保存された session の Runs = %d", got.Runs)
 	}
-	if len(wt.adds) != 1 || wt.adds[0].branch != "agentctl/issue-12" || wt.adds[0].base != "main" {
+	if len(wt.adds) != 1 || wt.adds[0].branch != "agentctl/myapp-issue-12" || wt.adds[0].base != "main" {
 		t.Errorf("worktree add = %+v", wt.adds)
 	}
 	if len(ag.calls) != 1 {
 		t.Fatalf("agent 起動回数 = %d, want 1（1回起動が規約）", len(ag.calls))
 	}
 	call := ag.calls[0]
-	if call.dir != "/state/worktrees/issue-12" {
+	if call.dir != "/state/worktrees/myapp-issue-12" {
 		t.Errorf("agent dir = %q", call.dir)
 	}
 	if !strings.Contains(call.prompt, "Issue #12") || !strings.Contains(call.prompt, "agentctl check") {
 		t.Errorf("prompt に必要な指示がない: %q", call.prompt)
 	}
-	found := false
-	for _, e := range call.env {
-		if e == "AGENTCTL_TASK=issue-12" {
-			found = true
+	for _, want := range []string{"AGENTCTL_TASK=myapp-issue-12", "AGENTCTL_COMPANY=personal"} {
+		found := false
+		for _, e := range call.env {
+			if e == want {
+				found = true
+			}
 		}
-	}
-	if !found {
-		t.Errorf("AGENTCTL_TASK が env にない: %v", call.env)
+		if !found {
+			t.Errorf("%s が env にない: %v", want, call.env)
+		}
 	}
 	if lk.acquired != 1 || lk.released != 1 {
 		t.Errorf("lock acquired=%d released=%d", lk.acquired, lk.released)
@@ -227,12 +238,38 @@ func TestStartLocked(t *testing.T) {
 
 func TestStartExisting(t *testing.T) {
 	tasks, st, _, _, _, ag, _ := newTasks()
-	st.m["issue-12"] = Session{ID: "issue-12"}
+	st.m["myapp-issue-12"] = Session{ID: "myapp-issue-12"}
 	if _, err := tasks.Start(context.Background(), startParams()); !errors.Is(err, ErrExists) {
 		t.Errorf("err = %v, want ErrExists", err)
 	}
 	if len(ag.calls) != 0 {
 		t.Error("既存タスクに対して agent が起動された")
+	}
+}
+
+// 「読めない」を「存在しない」と扱うと既存作業を上書きするため、必ず中断する。
+func TestStartAbortsOnUnreadableSession(t *testing.T) {
+	tasks, st, _, wt, _, _, _ := newTasks()
+	st.loadErr = errors.New("permission denied")
+	if _, err := tasks.Start(context.Background(), startParams()); err == nil || !strings.Contains(err.Error(), "既存 session の確認") {
+		t.Errorf("err = %v", err)
+	}
+	if len(wt.adds) != 0 {
+		t.Error("session が読めないのに worktree が作られた")
+	}
+}
+
+// 過去の試行のブランチが残っていても、強制リセットせず未使用の名前を選ぶ。
+func TestStartPicksUnusedBranch(t *testing.T) {
+	tasks, _, _, wt, _, _, _ := newTasks()
+	wt.branches["agentctl/myapp-issue-12"] = true
+	wt.branches["agentctl/myapp-issue-12-2"] = true
+	s, err := tasks.Start(context.Background(), startParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Branch != "agentctl/myapp-issue-12-3" {
+		t.Errorf("branch = %q", s.Branch)
 	}
 }
 
@@ -248,15 +285,15 @@ func TestStartTimeout(t *testing.T) {
 	if s.Runs != 1 {
 		t.Errorf("Runs = %d（失敗した起動も事実として記録する）", s.Runs)
 	}
-	if got := st.m["issue-12"]; got.Runs != 1 {
+	if got := st.m["myapp-issue-12"]; got.Runs != 1 {
 		t.Errorf("保存された Runs = %d", got.Runs)
 	}
 }
 
 func TestResumeKeepsLastAgent(t *testing.T) {
 	tasks, st, _, _, _, ag, _ := newTasks()
-	st.m["issue-12"] = Session{ID: "issue-12", Issue: 12, Worktree: "/wt", LastAgent: AgentClaude, Runs: 1}
-	s, err := tasks.Resume(context.Background(), ResumeParams{ID: "issue-12", Repo: testRepo(), Timeout: time.Minute, AgentOut: io.Discard})
+	st.m["myapp-issue-12"] = Session{ID: "myapp-issue-12", Issue: 12, Company: "personal", Worktree: "/wt", LastAgent: AgentClaude, Runs: 1}
+	s, err := tasks.Resume(context.Background(), ResumeParams{ID: "myapp-issue-12", Repo: testRepo(), Timeout: time.Minute, AgentOut: io.Discard})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,8 +307,8 @@ func TestResumeKeepsLastAgent(t *testing.T) {
 
 func TestResumeSwitchesAgent(t *testing.T) {
 	tasks, st, _, _, _, ag, _ := newTasks()
-	st.m["issue-12"] = Session{ID: "issue-12", Issue: 12, Worktree: "/wt", LastAgent: AgentCodex, Runs: 3}
-	s, err := tasks.Resume(context.Background(), ResumeParams{ID: "issue-12", Repo: testRepo(), Agent: AgentClaude, Timeout: time.Minute, AgentOut: io.Discard})
+	st.m["myapp-issue-12"] = Session{ID: "myapp-issue-12", Issue: 12, Worktree: "/wt", LastAgent: AgentCodex, Runs: 3}
+	s, err := tasks.Resume(context.Background(), ResumeParams{ID: "myapp-issue-12", Repo: testRepo(), Agent: AgentClaude, Timeout: time.Minute, AgentOut: io.Discard})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,35 +322,62 @@ func TestResumeSwitchesAgent(t *testing.T) {
 
 func TestResumeNotFound(t *testing.T) {
 	tasks, _, _, _, _, _, _ := newTasks()
-	if _, err := tasks.Resume(context.Background(), ResumeParams{ID: "issue-99", Repo: testRepo(), Timeout: time.Minute}); !errors.Is(err, ErrNotFound) {
+	if _, err := tasks.Resume(context.Background(), ResumeParams{ID: "myapp-issue-99", Repo: testRepo(), Timeout: time.Minute}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestRemoveUnwindsAll(t *testing.T) {
-	tasks, st, _, wt, _, _, cp := newTasks()
-	st.m["issue-12"] = Session{ID: "issue-12", RepoPath: "/repo/myapp", Worktree: "/wt/issue-12"}
-	cp.downErr = errors.New("down failed")
-	_, err := tasks.Remove("issue-12", io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "compose down") {
-		t.Errorf("err = %v", err)
+	tasks, st, lk, wt, _, _, cp := newTasks()
+	st.m["myapp-issue-12"] = Session{ID: "myapp-issue-12", RepoPath: "/repo/myapp", Worktree: "/wt/myapp-issue-12"}
+	if _, err := tasks.Remove("myapp-issue-12", io.Discard); err != nil {
+		t.Fatal(err)
 	}
-	// 失敗しても残りの unwind は続行される
-	if len(wt.removes) != 1 || wt.removes[0].path != "/wt/issue-12" {
+	if len(cp.downs) != 1 || cp.downs[0].project != "agentctl-myapp-issue-12" {
+		t.Errorf("compose down = %+v", cp.downs)
+	}
+	if len(wt.removes) != 1 || wt.removes[0].path != "/wt/myapp-issue-12" {
 		t.Errorf("worktree remove = %+v", wt.removes)
 	}
-	if _, ok := st.m["issue-12"]; ok {
+	if _, ok := st.m["myapp-issue-12"]; ok {
 		t.Error("session が削除されていない")
 	}
-	if len(cp.downs) != 1 || cp.downs[0].project != "agentctl-issue-12" {
-		t.Errorf("compose down = %+v", cp.downs)
+	if lk.acquired != 1 || lk.released != 1 {
+		t.Errorf("rm が lock を取っていない: acquired=%d", lk.acquired)
+	}
+}
+
+// Agent 実行中（lock 保持中）の rm は破壊を防ぐため拒否される。
+func TestRemoveLocked(t *testing.T) {
+	tasks, st, lk, wt, _, _, _ := newTasks()
+	st.m["myapp-issue-12"] = Session{ID: "myapp-issue-12"}
+	lk.err = ErrLocked
+	if _, err := tasks.Remove("myapp-issue-12", io.Discard); !errors.Is(err, ErrLocked) {
+		t.Errorf("err = %v, want ErrLocked", err)
+	}
+	if len(wt.removes) != 0 {
+		t.Error("lock 未取得で worktree が削除された")
+	}
+}
+
+// unwind が完遂できないときは session を残す。消すと task rm を再実行できなくなる。
+func TestRemoveKeepsSessionOnFailure(t *testing.T) {
+	tasks, st, _, wt, _, _, _ := newTasks()
+	st.m["myapp-issue-12"] = Session{ID: "myapp-issue-12", RepoPath: "/repo/myapp", Worktree: "/wt/myapp-issue-12"}
+	wt.removeErr = errors.New("worktree locked")
+	_, err := tasks.Remove("myapp-issue-12", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "worktree remove") {
+		t.Errorf("err = %v", err)
+	}
+	if _, ok := st.m["myapp-issue-12"]; !ok {
+		t.Error("失敗した unwind で session が削除された")
 	}
 }
 
 func TestCheckerStopsAtFirstFailure(t *testing.T) {
 	cp := &fakeCompose{failStep: "lint"}
 	c := &Checker{Compose: cp}
-	r := c.Run(testRepo(), "/wt", "agentctl-issue-12", io.Discard)
+	r := c.Run(testRepo(), "/wt", "agentctl-myapp-issue-12", io.Discard)
 	if r.Passed {
 		t.Error("Passed = true")
 	}
@@ -328,11 +392,11 @@ func TestCheckerStopsAtFirstFailure(t *testing.T) {
 func TestCheckerAllPass(t *testing.T) {
 	cp := &fakeCompose{}
 	c := &Checker{Compose: cp}
-	r := c.Run(testRepo(), "/wt", "agentctl-issue-12", io.Discard)
+	r := c.Run(testRepo(), "/wt", "agentctl-myapp-issue-12", io.Discard)
 	if !r.Passed || len(r.Steps) != 2 {
 		t.Errorf("result = %+v", r)
 	}
-	if cp.runs[0].project != "agentctl-issue-12" || cp.runs[0].service != "app" {
+	if cp.runs[0].project != "agentctl-myapp-issue-12" || cp.runs[0].service != "app" {
 		t.Errorf("compose run = %+v", cp.runs[0])
 	}
 }
@@ -347,15 +411,14 @@ func (f *fakePRs) CreateDraft(dir, base, title, body string) (string, error) {
 }
 
 func TestPRDraft(t *testing.T) {
-	st := newFakeStore()
-	st.m["issue-12"] = Session{ID: "issue-12", Issue: 12, IssueTitle: "タイトル", Worktree: "/wt/issue-12"}
 	prs := &fakePRs{}
-	d := &PRDrafter{Store: st, PRs: prs}
-	url, err := d.Draft("issue-12", testRepo())
+	d := &PRDrafter{PRs: prs}
+	s := Session{ID: "myapp-issue-12", Issue: 12, IssueTitle: "タイトル", Worktree: "/wt/myapp-issue-12"}
+	url, err := d.Draft(s, testRepo())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if url == "" || prs.base != "main" || prs.dir != "/wt/issue-12" {
+	if url == "" || prs.base != "main" || prs.dir != "/wt/myapp-issue-12" {
 		t.Errorf("draft = %+v", prs)
 	}
 	if !strings.Contains(prs.title, "#12") || !strings.Contains(prs.body, "Closes #12") {
