@@ -28,7 +28,7 @@ agentctl/
 │   ├── infra/           # ファイル、Git、Compose、GitHub、Agent などの実装
 │   ├── config/          # 設定ファイルの読み込みと検証
 │   ├── doctor/          # 環境の非破壊チェック
-│   └── cliio/           # CLI の入力、表示形式、終了コード
+│   └── cli/             # CLI の入力、表示形式、終了コード
 ├── config/              # リポジトリ管理対象の設定（秘密情報は置かない）
 ├── docs/decisions/      # Architecture Decision Record
 ├── scripts/             # 必要になった開発用スクリプト
@@ -47,7 +47,7 @@ cmd/agentctl ──→ core
       ├────────→ infra/*
       ├────────→ config
       ├────────→ doctor
-      └────────→ cliio
+      └────────→ cli
 
 infra/* ───────→ core
 ```
@@ -58,7 +58,7 @@ infra/* ───────→ core
 - `core` が必要とする外部操作は、利用側である `core` に小さな interface として定義する。interface には実際に利用するメソッドだけを含める。
 - `infra` は `core` の interface を実装する。`infra` 配下の実装同士は直接依存させず、処理の組み合わせは `core` または `cmd/agentctl` で行う。
 - `cmd/agentctl` は具象実装を生成して組み立てる。引数の解釈や終了処理は担うが、状態遷移のルールは持たない。
-- `config`、`doctor`、`cliio` はそれぞれの責務に閉じ、タスク進行の判断を持たない。
+- `config`、`doctor`、`cli` はそれぞれの責務に閉じ、タスク進行の判断を持たない。
 
 interface の名前や分割単位は、利用箇所が明らかになった時点で決める。実装前に網羅的な port 群を定義しない。
 

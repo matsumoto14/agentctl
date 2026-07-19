@@ -117,7 +117,7 @@ internal/core/       状態遷移、ユースケース、外部操作の interfa
 internal/infra/      ファイル、Git、Compose、GitHub、Agent などの実装
 internal/config/     設定の読み込みと検証
 internal/doctor/     環境の非破壊チェック
-internal/cliio/      CLI 入出力、表示形式、終了コード
+internal/cli/        CLI 入出力、表示形式、終了コード
 config/              リポジトリ管理対象の設定
 docs/decisions/      Architecture Decision Record
 test/                統合テストと E2E テスト

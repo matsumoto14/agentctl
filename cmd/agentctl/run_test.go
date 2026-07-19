@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/matsumoto14/agentctl/internal/cliio"
+	"github.com/matsumoto14/agentctl/internal/cli"
 )
 
 func runCapture(args []string) (code int, stdout, stderr string) {
@@ -29,8 +29,8 @@ func TestRunUsageErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			code, stdout, stderr := runCapture(tt.args)
-			if code != cliio.ExitUsage {
-				t.Errorf("exit code = %d, want %d", code, cliio.ExitUsage)
+			if code != cli.ExitUsage {
+				t.Errorf("exit code = %d, want %d", code, cli.ExitUsage)
 			}
 			if !strings.Contains(stderr, "usage: agentctl") {
 				t.Errorf("stderr に usage がない: %q", stderr)
@@ -44,8 +44,8 @@ func TestRunUsageErrors(t *testing.T) {
 
 func TestRunUnknownFlag(t *testing.T) {
 	code, _, _ := runCapture([]string{"check", "--nope"})
-	if code != cliio.ExitUsage {
-		t.Errorf("exit code = %d, want %d", code, cliio.ExitUsage)
+	if code != cli.ExitUsage {
+		t.Errorf("exit code = %d, want %d", code, cli.ExitUsage)
 	}
 }
 
@@ -54,8 +54,8 @@ func TestRunAllCommandsAreStubs(t *testing.T) {
 		name := strings.Join(c, " ")
 		t.Run(name, func(t *testing.T) {
 			code, stdout, stderr := runCapture(c)
-			if code != cliio.ExitUnimplemented {
-				t.Errorf("exit code = %d, want %d", code, cliio.ExitUnimplemented)
+			if code != cli.ExitUnimplemented {
+				t.Errorf("exit code = %d, want %d", code, cli.ExitUnimplemented)
 			}
 			want := "agentctl: " + name + ": not implemented\n"
 			if stderr != want {
@@ -73,8 +73,8 @@ func TestRunAllCommandsAcceptJSONFlag(t *testing.T) {
 		name := strings.Join(c, " ")
 		t.Run(name, func(t *testing.T) {
 			code, stdout, stderr := runCapture(append(append([]string{}, c...), "--json"))
-			if code != cliio.ExitUnimplemented {
-				t.Errorf("exit code = %d, want %d", code, cliio.ExitUnimplemented)
+			if code != cli.ExitUnimplemented {
+				t.Errorf("exit code = %d, want %d", code, cli.ExitUnimplemented)
 			}
 			var got stubResult
 			if err := json.Unmarshal([]byte(stdout), &got); err != nil {

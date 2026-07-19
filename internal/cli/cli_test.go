@@ -1,4 +1,4 @@
-package cliio
+package cli
 
 import (
 	"bytes"

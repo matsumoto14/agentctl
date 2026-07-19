@@ -1,5 +1,5 @@
-// Package cliio は CLI の出力形式と終了コードを定義する。
-package cliio
+// Package cli は CLI の出力形式と終了コードを定義する。
+package cli
 
 import (
 	"encoding/json"

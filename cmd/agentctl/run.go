@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/matsumoto14/agentctl/internal/cliio"
+	"github.com/matsumoto14/agentctl/internal/cli"
 )
 
 // この 7 動詞の外に動詞を追加しない（CLAUDE.md / ADR 0002）。
@@ -30,14 +30,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	name, rest, ok := match(args)
 	if !ok {
 		usage(stderr)
-		return cliio.ExitUsage
+		return cli.ExitUsage
 	}
 
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "機械処理向けの JSON を stdout に出力する")
 	if err := fs.Parse(rest); err != nil {
-		return cliio.ExitUsage
+		return cli.ExitUsage
 	}
 
 	return notImplemented(name, *jsonOut, stdout, stderr)
@@ -64,13 +64,13 @@ func match(args []string) (name string, rest []string, ok bool) {
 
 func notImplemented(name string, jsonOut bool, stdout, stderr io.Writer) int {
 	if jsonOut {
-		if err := cliio.WriteJSON(stdout, stubResult{Command: name, Implemented: false}); err != nil {
+		if err := cli.WriteJSON(stdout, stubResult{Command: name, Implemented: false}); err != nil {
 			fmt.Fprintf(stderr, "agentctl: %s: %v\n", name, err)
-			return cliio.ExitFailure
+			return cli.ExitFailure
 		}
 	}
 	fmt.Fprintf(stderr, "agentctl: %s: not implemented\n", name)
-	return cliio.ExitUnimplemented
+	return cli.ExitUnimplemented
 }
 
 func usage(w io.Writer) {
