@@ -9,7 +9,7 @@ import (
 	"github.com/matsumoto14/agentctl/internal/cliio"
 )
 
-// commands は実装対象の全コマンド。この 7 動詞の外に追加しない（CLAUDE.md / ADR 0002）。
+// この 7 動詞の外に動詞を追加しない（CLAUDE.md / ADR 0002）。
 var commands = [][]string{
 	{"task", "start"},
 	{"task", "resume"},
@@ -20,14 +20,12 @@ var commands = [][]string{
 	{"doctor"},
 }
 
-// stubResult は未実装コマンドの --json 出力。
 type stubResult struct {
 	Command     string `json:"command"`
 	Implemented bool   `json:"implemented"`
 }
 
-// run は引数を解釈してコマンドへディスパッチし、終了コードを返す。
-// stdin は読まず、対話プロンプトを出さない。
+// run は stdin を読まず、対話プロンプトも出さない（Gateway コントラクト: 非対話）。
 func run(args []string, stdout, stderr io.Writer) int {
 	name, rest, ok := match(args)
 	if !ok {
@@ -45,7 +43,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return notImplemented(name, *jsonOut, stdout, stderr)
 }
 
-// match は args の先頭をコマンド定義と照合し、コマンド名と残りの引数を返す。
 func match(args []string) (name string, rest []string, ok bool) {
 	for _, c := range commands {
 		if len(args) < len(c) {
