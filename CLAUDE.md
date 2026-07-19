@@ -8,22 +8,20 @@ agentctl は、GitHub Issue を起点とする開発作業を支援する Go 製
 
 agentctl 自身はコードを生成せず、タスクの反復も統括しない。曖昧な判断を LLM に委ねるのではなく、CLI の引数、設定、現在の状態に基づいて決定的に動作することを目指す。
 
-## 現在の状態
+## 開発環境
 
-プロジェクトは実装開始前であり、Go モジュールはまだ初期化されていない。
-
-初期化後は標準の Go ツールチェーンを使う。
+ビルド、テスト、vet の検証は、ホストの Go ではなくリポジトリ直下の `compose.yaml` の `dev` サービス（Go コンテナ）で実行する。
 
 ```sh
-go build ./...
-go test ./...
-go vet ./...
+docker compose run --rm dev go build ./...
+docker compose run --rm dev go test ./...
+docker compose run --rm dev go vet ./...
 ```
 
 特定のテストだけを実行する場合は、対象パッケージとテスト名を指定する。
 
 ```sh
-go test ./internal/core/... -run TestName
+docker compose run --rm dev go test ./internal/core/... -run TestName
 ```
 
 ## 実装方針
@@ -119,7 +117,7 @@ internal/core/       状態遷移、ユースケース、外部操作の interfa
 internal/infra/      ファイル、Git、Compose、GitHub、Agent などの実装
 internal/config/     設定の読み込みと検証
 internal/doctor/     環境の非破壊チェック
-internal/cliio/      CLI 入出力、表示形式、終了コード
+internal/cli/        CLI 入出力、表示形式、終了コード
 config/              リポジトリ管理対象の設定
 docs/decisions/      Architecture Decision Record
 test/                統合テストと E2E テスト
@@ -145,6 +143,9 @@ test/                統合テストと E2E テスト
 将来必要になる可能性だけを理由に、抽象化、設定項目、ディレクトリを追加しない。
 
 ## 変更時のルール
+
+- ブランチ名は `feat/`、`fix/`、`chore/` のいずれかを接頭辞にする（例: `feat/issue-1-cli-skeleton`）。機能追加は `feat`、不具合修正は `fix`、それ以外の整備は `chore`。
+- コメントは、コードを見てわかる内容には書かない。なぜそうなっているか（背景、制約、設計判断への参照）の補足が必要な場合にのみ書く。公開要素の godoc コメントはこの限りではない。
 
 - 実装前に、変更が現在のコマンドとスコープに収まるか確認する。
 - 設計上の判断を変更する場合は、該当する ADR を更新するか、新しい ADR を追加する。

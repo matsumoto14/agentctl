@@ -1,0 +1,16 @@
+services:
+  dev:
+    image: golang:1.26.5
+    working_dir: /src
+    environment:
+      # ホスト所有の bind mount に対して git が所有者不一致を報告するため、
+      # 検証用ビルドでは VCS スタンプを無効化する
+      GOFLAGS: -buildvcs=false
+    volumes:
+      - .:/src
+      - go-mod:/go/pkg/mod
+      - go-build:/root/.cache/go-build
+
+volumes:
+  go-mod:
+  go-build:
