@@ -54,9 +54,6 @@ func (t *Tasks) Start(ctx context.Context, p StartParams) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
-	if err := t.Worktrees.Add(p.Repo.Path, p.WorktreePath, branch, p.Repo.Base); err != nil {
-		return Session{}, fmt.Errorf("worktree の作成: %w", err)
-	}
 	now := t.Now()
 	s := Session{
 		ID: id, Company: p.Company, Repo: p.Repo.Name, RepoPath: p.Repo.Path,
@@ -64,8 +61,14 @@ func (t *Tasks) Start(ctx context.Context, p StartParams) (Session, error) {
 		Worktree: p.WorktreePath, Branch: branch,
 		CreatedAt: now, UpdatedAt: now,
 	}
+	// session を先に書く（write-ahead）。worktree 作成後に保存が失敗すると
+	// 「記録のない worktree」が残り、task rm で片付けられなくなる。この順なら
+	// どこで失敗しても session が残り、task rm が一組として回収できる。
 	if err := t.Store.Save(s); err != nil {
-		return s, err
+		return Session{}, fmt.Errorf("session の保存: %w", err)
+	}
+	if err := t.Worktrees.Add(p.Repo.Path, p.WorktreePath, branch, p.Repo.Base); err != nil {
+		return s, fmt.Errorf("worktree の作成: %w（task rm %s で片付けてから再実行する）", err, id)
 	}
 	return t.runAgent(ctx, s, p.Agent, p.Timeout, issue, p.AgentOut)
 }

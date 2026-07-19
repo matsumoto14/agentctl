@@ -25,11 +25,27 @@ func (Runner) Run(dir, project, service string, command []string, out io.Writer)
 }
 
 func (Runner) Down(dir, project string, out io.Writer) error {
-	// worktree が既に消えていても project 単位の down は成立する
-	if _, err := os.Stat(dir); err != nil {
-		dir = ""
+	d, cleanup, err := downDir(dir)
+	if err != nil {
+		return err
 	}
-	return execDocker(dir, out, downArgs(project))
+	defer cleanup()
+	return execDocker(d, out, downArgs(project))
+}
+
+// downDir は down の実行ディレクトリを決める。worktree が既に消えていても down を
+// 再試行できるようにする（rm の unwind が途中失敗した後の回収経路）。空ディレクトリ
+// から実行すると Compose v2.21+ は compose ファイルなしで project ラベルから対象を
+// 解決する。cwd の無関係な compose ファイルを誤読しないよう、必ず空ディレクトリを使う。
+func downDir(dir string) (string, func(), error) {
+	if _, err := os.Stat(dir); err == nil {
+		return dir, func() {}, nil
+	}
+	empty, err := os.MkdirTemp("", "agentctl-down-*")
+	if err != nil {
+		return "", nil, err
+	}
+	return empty, func() { os.RemoveAll(empty) }, nil
 }
 
 func execDocker(dir string, out io.Writer, args []string) error {

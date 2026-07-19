@@ -259,6 +259,46 @@ func TestStartAbortsOnUnreadableSession(t *testing.T) {
 	}
 }
 
+// session の保存が失敗したら worktree を作らない（write-ahead）。
+// 逆順だと「記録のない worktree」が残り、task rm で片付けられなくなる。
+func TestStartSaveFailureCreatesNothing(t *testing.T) {
+	tasks, st, _, wt, _, ag, _ := newTasks()
+	st.saveErr = errors.New("disk full")
+	_, err := tasks.Start(context.Background(), startParams())
+	if err == nil || !strings.Contains(err.Error(), "session の保存") {
+		t.Errorf("err = %v", err)
+	}
+	if len(wt.adds) != 0 {
+		t.Error("保存失敗なのに worktree が作られた")
+	}
+	if len(ag.calls) != 0 {
+		t.Error("保存失敗なのに agent が起動された")
+	}
+}
+
+// worktree 作成に失敗しても session は残り、task rm で一組として回収できる。
+func TestStartWorktreeFailureIsRecoverableByRm(t *testing.T) {
+	tasks, st, _, wt, _, ag, _ := newTasks()
+	wt.addErr = errors.New("path exists")
+	_, err := tasks.Start(context.Background(), startParams())
+	if err == nil || !strings.Contains(err.Error(), "task rm") {
+		t.Errorf("err = %v（rm への誘導がない）", err)
+	}
+	if _, ok := st.m["myapp-issue-12"]; !ok {
+		t.Fatal("session が残っていない（rm で回収できない）")
+	}
+	if len(ag.calls) != 0 {
+		t.Error("worktree 作成失敗なのに agent が起動された")
+	}
+	// 回収経路: rm が session ごと片付けられる
+	if _, err := tasks.Remove("myapp-issue-12", io.Discard); err != nil {
+		t.Errorf("rm での回収に失敗: %v", err)
+	}
+	if _, ok := st.m["myapp-issue-12"]; ok {
+		t.Error("rm 後も session が残っている")
+	}
+}
+
 // 過去の試行のブランチが残っていても、強制リセットせず未使用の名前を選ぶ。
 func TestStartPicksUnusedBranch(t *testing.T) {
 	tasks, _, _, wt, _, _, _ := newTasks()
