@@ -8,22 +8,20 @@ agentctl は、GitHub Issue を起点とする開発作業を支援する Go 製
 
 agentctl 自身はコードを生成せず、タスクの反復も統括しない。曖昧な判断を LLM に委ねるのではなく、CLI の引数、設定、現在の状態に基づいて決定的に動作することを目指す。
 
-## 現在の状態
+## 開発環境
 
-プロジェクトは実装開始前であり、Go モジュールはまだ初期化されていない。
-
-初期化後は標準の Go ツールチェーンを使う。
+ビルド、テスト、vet の検証は、ホストの Go ではなくリポジトリ直下の `compose.yaml` の `dev` サービス（Go コンテナ）で実行する。
 
 ```sh
-go build ./...
-go test ./...
-go vet ./...
+docker compose run --rm dev go build ./...
+docker compose run --rm dev go test ./...
+docker compose run --rm dev go vet ./...
 ```
 
 特定のテストだけを実行する場合は、対象パッケージとテスト名を指定する。
 
 ```sh
-go test ./internal/core/... -run TestName
+docker compose run --rm dev go test ./internal/core/... -run TestName
 ```
 
 ## 実装方針
