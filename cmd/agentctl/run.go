@@ -36,11 +36,35 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "機械処理向けの JSON を stdout に出力する")
-	if err := fs.Parse(rest); err != nil {
+	pos, err := parseFlags(fs, rest)
+	if err != nil {
+		return cli.ExitUsage
+	}
+	// 位置引数を取る動詞はまだ実装していないため、余剰引数は使い方エラーにする。
+	if len(pos) > 0 {
+		fmt.Fprintf(stderr, "agentctl: %s: unexpected argument %q\n", name, pos[0])
 		return cli.ExitUsage
 	}
 
 	return notImplemented(name, *jsonOut, stdout, stderr)
+}
+
+// parseFlags は位置引数の後ろに置かれたフラグも解析し、位置引数を返す。
+// 標準の flag.FlagSet.Parse は最初の位置引数で解析を終了するため、
+// `task resume <id> --agent claude` のような形式でフラグが黙って無視されてしまう。
+func parseFlags(fs *flag.FlagSet, args []string) ([]string, error) {
+	var pos []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		args = fs.Args()
+		if len(args) == 0 {
+			return pos, nil
+		}
+		pos = append(pos, args[0])
+		args = args[1:]
+	}
 }
 
 func match(args []string) (name string, rest []string, ok bool) {

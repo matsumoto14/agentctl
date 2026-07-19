@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"strings"
 	"testing"
 
@@ -46,6 +47,46 @@ func TestRunUnknownFlag(t *testing.T) {
 	code, _, _ := runCapture([]string{"check", "--nope"})
 	if code != cli.ExitUsage {
 		t.Errorf("exit code = %d, want %d", code, cli.ExitUsage)
+	}
+}
+
+// 位置引数を取る動詞は未実装のため、余剰の位置引数は使い方エラーになる。
+// 位置引数の後ろのフラグが黙って無視されないことも保証する。
+func TestRunUnexpectedArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"余剰引数", []string{"doctor", "unexpected"}},
+		{"位置引数の後ろの既知フラグ", []string{"task", "resume", "abc", "--json"}},
+		{"位置引数の後ろの未知フラグ", []string{"task", "resume", "abc", "--agent", "claude"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, stdout, _ := runCapture(tt.args)
+			if code != cli.ExitUsage {
+				t.Errorf("exit code = %d, want %d", code, cli.ExitUsage)
+			}
+			if strings.Contains(stdout, "implemented") {
+				t.Errorf("未実装スタブとして処理された: %q", stdout)
+			}
+		})
+	}
+}
+
+func TestParseFlagsAfterPositionals(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "")
+	agent := fs.String("agent", "", "")
+	pos, err := parseFlags(fs, []string{"abc", "--agent", "claude", "--json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pos) != 1 || pos[0] != "abc" {
+		t.Errorf("pos = %v, want [abc]", pos)
+	}
+	if !*jsonOut || *agent != "claude" {
+		t.Errorf("json = %v, agent = %q; 位置引数の後ろのフラグが解析されていない", *jsonOut, *agent)
 	}
 }
 
