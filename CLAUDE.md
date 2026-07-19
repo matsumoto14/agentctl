@@ -89,6 +89,8 @@ agentctl の都合で、対象リポジトリの構成や Compose ファイル�
 config/repos/<company>/<repo>.yaml
 ```
 
+実行時の設定探索は環境変数 `AGENTCTL_CONFIG_DIR`（既定: `~/git/agentctl/config`）を起点とする。スキーマは [config/repos/README.md](config/repos/README.md) を参照する。
+
 ### 状態と秘密情報
 
 Issue と Pull Request には、作業の要約と最終的な判断を記録する。詳細な実行ログは貼り付けない。
